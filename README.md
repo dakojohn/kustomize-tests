@@ -33,7 +33,7 @@ in practice.
 The given YAML files are ordered in following directory
 (you can use `find` if you don't have tree):
 
-```
+``` bash
 $ tree ./original | head
 .
 └── services
@@ -64,7 +64,7 @@ directory.
 
 We first make a copy of the data directory.
 
-```
+``` bash
 $ cp -a original tmp
 $ cd tmp
 ```
@@ -73,14 +73,14 @@ We initialize a module so that we can treat all our configuration files
 in the subdirectories as part of one package.
 We do that later by giving all the same package name.
 
-```
+``` bash
 $ cue mod init
 ```
 
 We initialize a Go module so that later we can resolve the
 `k8s.io/api/apps/v1` Go package dependency:
 
-```
+``` bash
 $ go mod init example.com
 ```
 
@@ -89,7 +89,7 @@ Creating a module also allows our packages import external packages.
 Let's try to use the `cue import` command to convert the given YAML files
 into CUE.
 
-```
+``` bash
 $ cd services
 $ cue import ./...
 must specify package name with the -p flag
@@ -98,7 +98,7 @@ must specify package name with the -p flag
 Since we have multiple packages and files, we need to specify the package to
 which they should belong.
 
-```
+``` bash
 $ cue import ./... -p kube
 path, list, or files flag needed to handle multiple objects in file "./frontend/bartender/kube.yaml"
 ```
@@ -115,7 +115,7 @@ just as is allowed by Kubernetes.
 To accomplish this, we tell `cue` to put each object in the configuration
 tree at the path with the "kind" as first element and "name" as second.
 
-```
+``` bash
 $ cue import ./... -p kube -l 'strings.ToCamel(kind)' -l metadata.name -f
 ```
 
@@ -127,7 +127,7 @@ We also added the `-f` flag to overwrite the few files that succeeded before.
 
 Let's see what happened:
 
-```
+``` bash
 $ tree . | head
 .
 └── services
@@ -147,8 +147,10 @@ Comments of the YAML files are preserved.
 The result is not fully pleasing, though.
 Take a look at `mon/prometheus/configmap.cue`.
 
-```
+``` bash
 $ cat mon/prometheus/configmap.cue
+```
+``` cue
 package kube
 
 apiVersion: "v1"
@@ -171,14 +173,16 @@ in the configuration files and then converts these recursively.
 
 <-- TODO: update import label format -->
 
-```
+``` bash
 $ cue import ./... -p kube -l 'strings.ToCamel(kind)' -l metadata.name -f -R
 ```
 
 Now the file looks like:
 
-```
+``` bash
 $ cat mon/prometheus/configmap.cue
+```
+``` cue
 package kube
 
 import "encoding/yaml"
@@ -201,8 +205,10 @@ a string with an equivalent YAML file.
 Fields starting with an underscore (`_`) are not included when emitting
 a configuration file (they are when enclosed in double quotes).
 
-```
+``` bash
 $ cue eval ./mon/prometheus -e configMap.prometheus
+```
+``` cue
 apiVersion: "v1"
 kind: "ConfigMap"
 metadata: {
@@ -234,7 +240,7 @@ Now we have imported the YAML files we can start the simplification process.
 Before we start the restructuring, lets save a full evaluation so that we
 can verify that simplifications yield the same results.
 
-```
+```bash
 $ cue eval -c ./... > snapshot
 ```
 
@@ -247,14 +253,16 @@ common structure.
 We copy one of the files containing both as a basis for creating our template
 to the root of the directory tree.
 
-```
+```bash
 $ cp frontend/breaddispatcher/kube.cue .
 ```
 
 Modify this file as below.
 
-```
+```bash
 $ cat <<EOF > kube.cue
+```
+```cue
 package kube
 
 service: [ID=_]: {
@@ -334,7 +342,7 @@ other a user of the template will want to specify.
 
 Let's compare the result of merging our new template to our original snapshot.
 
-```
+```bash
 $ cue eval ./... -c > snapshot2
 --- ./mon/alertmanager
 service.alertmanager.metadata.labels.component: incomplete value (string):
@@ -361,23 +369,25 @@ We do this by setting a newly defined top-level field in each directory
 to the directory name and modify our master template file to use it.
 
 <!--
-```
+```bash
 $ cue add */kube.cue -p kube --list <<EOF
 #Component: "{{.DisplayPath}}"
 EOF
 ```
 -->
 
-```
+```bash
 # set the component label to our new top-level field
 $ sed -i.bak 's/component:.*string/component: #Component/' kube.cue && rm kube.cue.bak
 
 # add the new top-level field to our previous template definitions
 $ cat <<EOF >> kube.cue
-
+```
+```cue
 #Component: string
 EOF
-
+```
+```bash
 # add a file with the component label to each directory
 $ ls -d */ | sed 's/.$//' | xargs -I DIR sh -c 'cd DIR; echo "package kube
 
@@ -390,7 +400,7 @@ $ cue fmt kube.cue */kube.cue
 
 Let's try again to see if it is fixed:
 
-```
+```bash
 $ cue eval -c ./... > snapshot2
 $ diff snapshot snapshot2
 ...
@@ -399,13 +409,13 @@ $ diff snapshot snapshot2
 Except for having more consistent labels and some reordering, nothing changed.
 We are happy and save the result as the new baseline.
 
-```
+```bash
 $ cp snapshot2 snapshot
 ```
 
 The corresponding boilerplate can now be removed with `cue trim`.
 
-```
+```bash
 $ find . | grep kube.cue | xargs wc | tail -1
     1792    3616   34815 total
 $ cue trim ./...
@@ -419,7 +429,7 @@ In doing so it removed over 500 lines of configuration, or over 30%!
 
 The following is proof that nothing changed semantically:
 
-```
+```bash
 $ cue eval -c ./... > snapshot2
 $ diff snapshot snapshot2 | wc
        0       0       0
@@ -430,9 +440,10 @@ A first thing to note is that DaemonSets and StatefulSets share a similar
 structure to Deployments.
 We generalize the top-level template as follows:
 
-```
+```bash
 $ cat <<EOF >> kube.cue
-
+```
+```cue
 daemonSet: [ID=_]: _spec & {
     apiVersion: "apps/v1"
     kind:       "DaemonSet"
@@ -473,6 +484,8 @@ _spec: {
     }
 }
 EOF
+```
+```bash
 $ cue fmt
 ```
 
@@ -490,9 +503,10 @@ Next we observe that all deployments, stateful sets and daemon sets have
 an accompanying service which shares many of the same fields.
 We add:
 
-```
+```bash
 $ cat <<EOF >> kube.cue
-
+```
+```cue
 // Define the _export option and set the default to true
 // for all ports defined in all containers.
 _spec: spec: template: spec: containers: [...{
@@ -517,6 +531,8 @@ for x in [deployment, daemonSet, statefulSet] for k, v in x {
     }
 }
 EOF
+```
+```bash
 $ cue fmt
 ```
 
@@ -547,19 +563,24 @@ to include them in the service and explicitly set this to false
 for the respective ports in `infra/events`, `infra/tasks`, and `infra/watcher`.
 
 For the purpose of this tutorial, here are some quick patches:
-```
+```bash
 $ cat <<EOF >> infra/events/kube.cue
-
+```
+```cue
 deployment: events: spec: template: spec: containers: [{ ports: [{_export: false}, _] }]
 EOF
-
+```
+```bash
 $ cat <<EOF >> infra/tasks/kube.cue
-
+```
+```cue
 deployment: tasks: spec: template: spec: containers: [{ ports: [{_export: false}, _] }]
 EOF
-
+```
+```bash
 $ cat <<EOF >> infra/watcher/kube.cue
-
+```
+```cue
 deployment: watcher: spec: template: spec: containers: [{ ports: [{_export: false}, _] }]
 EOF
 ```
@@ -585,8 +606,10 @@ But we have another trick up our sleeve.
 With the `-s` or `--simplify` option we can tell `trim` or `fmt` to collapse
 structs with a single element onto a single line. For instance:
 
-```
+``` bash
 $ head frontend/breaddispatcher/kube.cue
+```
+``` cue
 package kube
 
 deployment: breaddispatcher: {
@@ -597,8 +620,12 @@ deployment: breaddispatcher: {
                     "prometheus.io.scrape": "true"
                     "prometheus.io.port":   "7080"
                 }
+```
+```bash
 $ cue trim ./... -s
 $ head -7 frontend/breaddispatcher/kube.cue
+```
+```cue
 package kube
 
 deployment: breaddispatcher: spec: template: {
@@ -606,6 +633,8 @@ deployment: breaddispatcher: spec: template: {
         "prometheus.io.scrape": "true"
         "prometheus.io.port":   "7080"
     }
+```
+```bash
 $ find . | grep kube.cue | xargs wc | tail -1
      975    2116   20264 total
 ```
@@ -633,9 +662,10 @@ Also, most have two prometheus-related annotations, while some have one.
 We leave the inconsistencies in ports, but add both annotations
 unconditionally.
 
-```
+```bash
 $ cat <<EOF >> frontend/kube.cue
-
+```
+``` cue
 deployment: [string]: spec: template: {
     metadata: annotations: {
         "prometheus.io.scrape": "true"
@@ -646,6 +676,8 @@ deployment: [string]: spec: template: {
     }]
 }
 EOF
+```
+``` bash
 $ cue fmt ./frontend
 
 # check differences
@@ -660,7 +692,7 @@ $ cp snapshot2 snapshot
 
 Two lines with annotations added, improving consistency.
 
-```
+``` bash
 $ cue trim -s ./frontend/...
 $ find . | grep kube.cue | xargs wc | tail -1
      931    2052   19624 total
@@ -681,9 +713,10 @@ two or three disks with similar patterns.
 
 Let's add everything but the disks for now:
 
-```
+```bash
 $ cat <<EOF >> kitchen/kube.cue
-
+```
+```cue
 deployment: [string]: spec: template: {
     metadata: annotations: "prometheus.io.scrape": "true"
     spec: containers: [{
@@ -701,6 +734,8 @@ deployment: [string]: spec: template: {
     }]
 }
 EOF
+```
+```bash
 $ cue fmt ./kitchen
 ```
 
@@ -713,9 +748,10 @@ We prefer to keep these two definitions together.
 We take the volumes definition from `expiditer` (the first config in that
 directory with two disks), and generalize it:
 
-```
+```bash
 $ cat <<EOF >> kitchen/kube.cue
-
+```
+```cue
 deployment: [ID=_]: spec: template: spec: {
     _hasDisks: *true | bool
 
@@ -743,14 +779,18 @@ deployment: [ID=_]: spec: template: spec: {
     }
 }
 EOF
-
+```
+```bash
 $ cat <<EOF >> kitchen/souschef/kube.cue
-
+```
+``` cue
 deployment: souschef: spec: template: spec: {
     _hasDisks: false
 }
 
 EOF
+```
+``` bash
 $ cue fmt ./kitchen/...
 ```
 
@@ -769,7 +809,7 @@ Later in this document we introduce a manually optimized configuration.
 We add the two disk by default and define a `_hasDisks` option to opt out.
 The `souschef` configuration is the only one that defines no disks.
 
-```
+``` bash
 $ cue trim -s ./kitchen/...
 
 # check differences
@@ -861,8 +901,10 @@ To work with Kubernetes we need to convert our map of Kubernetes objects
 back to a simple list.
 We create the tool file to do just that.
 
-```
+``` bash
 $ cat <<EOF > kube_tool.cue
+```
+``` cue
 package kube
 
 objects: [ for v in objectSets for x in v { x } ]
@@ -887,8 +929,10 @@ download a web page, or execute a command.
 
 We start by defining the `ls` command which dumps all our objects
 
-```
+``` bash
 $ cat <<EOF > ls_tool.cue
+```
+``` cue
 package kube
 
 import (
@@ -920,7 +964,7 @@ Although we may keep supporting this form if needed.
 
 The command is now available in the `cue` tool:
 
-```
+``` bash
 $ cue cmd ls ./frontend/maitred
 Service         frontend        maitred
 Deployment      frontend        maitred
@@ -928,7 +972,7 @@ Deployment      frontend        maitred
 
 As long as the name does not conflict with an existing command it can be
 used as a top-level command as well:
-```
+``` bash
 $ cue ls ./frontend/maitred
 ...
 ```
@@ -945,7 +989,7 @@ but our per-type maps of Kubernetes objects should be free of conflict
 (if there is, we have a problem with Kubernetes down the line).
 A merge thus gives us a unified view of all objects.
 
-```
+``` bash
 $ cue ls ./...
 Service       infra      tasks
 Service       frontend   bartender
@@ -977,8 +1021,10 @@ The following adds a command to dump the selected objects as a YAML stream.
 <!--
 TODO: add command line flags to filter object types.
 -->
-```
+``` bash
 $ cat <<EOF > dump_tool.cue
+```
+``` cue
 package kube
 
 import (
@@ -1010,8 +1056,10 @@ stream of YAML values.
 
 The `create` command sends a list of objects to `kubectl create`.
 
-```
+``` bash
 $ cat <<EOF > create_tool.cue
+```
+``` cue
 package kube
 
 import (
@@ -1040,7 +1088,7 @@ The `cue` tool does a static analysis of the dependencies and runs all
 tasks which dependencies are satisfied in parallel while blocking tasks
 for which an input is missing.
 
-```
+``` bash
 $ cue create ./frontend/...
 service "bartender" created (dry run)
 service "breaddispatcher" created (dry run)
@@ -1065,19 +1113,20 @@ of course.
 
 In order for `cue get go` to generate the CUE templates from Go sources, you first need to have the sources locally:
 
-```
+``` bash
 $ go get k8s.io/api/apps/v1
 ```
 
-```
+``` bash
 $ cue get go k8s.io/api/apps/v1
-
 ```
 
 Now that we have the Kubernetes definitions in our module, we can import and use them:
 
-```
+``` bash
 $ cat <<EOF > k8s_defs.cue
+```
+``` cue
 package kube
 
 import (
@@ -1094,8 +1143,8 @@ EOF
 
 And, finally, we'll format again:
 
-```
-cue fmt
+``` bash
+$ cue fmt
 ```
 
 ## Manually tailored configuration
@@ -1126,7 +1175,7 @@ the Kubernetes object upon conversion.
 
 We define one top-level file with our generic definitions.
 
-```
+``` cue
 // file cloud.cue
 package cloud
 
@@ -1170,7 +1219,7 @@ Section "Quick 'n Dirty".
 The first step we took is to eliminate `statefulSet` and `daemonSet` and
 rather just have a `deployment` allowing different kinds.
 
-```
+``` cue
 deployment: [Name=_]: _base & {
     name:     *Name | string
     ...
@@ -1183,7 +1232,7 @@ This also eliminates the need for `_spec`.
 The next step is to pull common fields, such as `image` to the top level.
 
 Arguments can be specified as a map.
-```
+``` cue
     arg: [string]: string
     args: [ for k, v in arg { "-\(k)=\(v)" } ] | [...string]
 ```
@@ -1192,7 +1241,7 @@ If order matters, users could explicitly specify the list as well.
 
 For ports we define two simple maps from name to port number:
 
-```
+``` cue
     // expose port defines named ports that is exposed in the service
     expose: port: [string]: int
 
@@ -1209,7 +1258,7 @@ In most cases mapping strings to string suffices.
 The testdata uses other options though.
 We define a simple `env` map and an `envSpec` for more elaborate cases:
 
-```
+``` cue
     env: [string]: string
 
     envSpec: [string]: {}
@@ -1226,7 +1275,7 @@ Finally, our assumption that there is one container per deployment allows us
 to create a single definition for volumes, combining the information for
 volume spec and volume mount.
 
-```
+``` cue
     volume: [Name=_]: {
         name:       *Name | string
         mountPath:  string
@@ -1248,7 +1297,7 @@ The service definition is straightforward.
 As we eliminated stateful and daemon sets, the field comprehension to
 automatically derive a service is now a bit simpler:
 
-```
+``` cue
 // define services implied by deployments
 service: {
     for k, spec in deployment {
@@ -1279,7 +1328,7 @@ The tailorings for this specific project (the labels) are defined
 
 Converting services is fairly straightforward.
 
-```
+``` cue
 kubernetes: services: {
     for k, x in service {
         "\(k)": x.kubernetes & {
@@ -1318,7 +1367,7 @@ leaf directories contain string interpolations.
 The fully written out manual configuration can be found in the `manual`
 subdirectory.
 Running our usual count yields
-```
+``` bash
 $ find . | grep kube.cue | xargs wc | tail -1
      542    1190   11520 total
 ```
